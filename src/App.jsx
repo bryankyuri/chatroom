@@ -13,7 +13,7 @@ import Header from './components/navigation/Header';
 import BottomNav from './components/navigation/BottomNav';
 
 // Initialize socket without auth first
-const socket = io('http://localhost:3000');
+const socket = io(import.meta.env.VITE_BASE_URL_SOCKET);
 
 // Create a wrapper component to use router hooks
 const AppContent = ({ user, handleLogout, setUser }) => {

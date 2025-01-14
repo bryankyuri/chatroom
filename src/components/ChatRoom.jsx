@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
+  requestNotificationPermission,
+  showNotification,
+} from "../utils/notifications";
+import {
   Mic,
   MicOff,
   Image as ImageIcon,
@@ -22,11 +26,38 @@ const ChatRoom = ({ user, socket }) => {
   const [error, setError] = useState("");
   const [isConnected, setIsConnected] = useState(false);
   const [roomInfo, setRoomInfo] = useState(null);
-  const [groupInfo, setGroupInfo] = useState(null);
   const [typingUsers, setTypingUsers] = useState(new Map());
+  const [isPageVisible, setIsPageVisible] = useState(!document.hidden);
+  const [notificationPermission, setNotificationPermission] = useState(false);
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef({});
+
+  useEffect(() => {
+    const setupNotifications = async () => {
+      const permission = await requestNotificationPermission();
+      setNotificationPermission(permission);
+      console.log("Notification permission status:", permission); // Debug log
+    };
+
+    setupNotifications();
+  }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        console.log('Page is hidden, notifications enabled'); // Debug log
+      } else {
+        console.log('Page is visible, notifications disabled'); // Debug log
+      }
+    };
+  
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+  
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     if (!socket?.connected || !user) {
@@ -43,13 +74,38 @@ const ChatRoom = ({ user, socket }) => {
       setRoomInfo(info);
     };
 
-    const handleGroupInfo = (info) => {
-      setGroupInfo(info);
-    };
-
-    const handleMessage = (newMessage) => {
+    const handleNewMessage = (newMessage) => {
       setMessages((prev) => [...prev, newMessage]);
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+
+      // Show notification if page is not visible and message is not from current user
+      if (
+        message.sender.id !== user.id && 
+        document.hidden && 
+        notificationPermission
+      ) {
+        console.log('Showing notification for new message'); // Debug log
+        showNotification(
+          `New message from ${message.sender.username}`,
+          message.type === 'text' ? message.content : `Sent a ${message.type}`
+        );
+      }
+
+      // Mark message as seen if it's not our message
+      if (message.sender.id !== user.id) {
+        socket.emit("message:seen", { roomId, messageId: message.id, user });
+      }
+    };
+
+    const handleMessageHistory = (history) => {
+      setMessages(history);
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+
+    const handleSeenUpdate = ({ messageId, seenBy }) => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === messageId ? { ...msg, seenBy } : msg))
+      );
     };
 
     const handleTyping = ({ userId, username }) => {
@@ -69,25 +125,11 @@ const ChatRoom = ({ user, socket }) => {
     };
 
     socket.on("room:info", handleRoomInfo);
-    socket.on("group:info", handleGroupInfo);
-    socket.on("message:received", handleMessage);
-    socket.on("message:history", setMessages);
+    socket.on("message:received", handleNewMessage);
+    socket.on("message:history", handleMessageHistory);
+    socket.on("message:seen:update", handleSeenUpdate);
     socket.on("user:typing", handleTyping);
     socket.on("user:stop-typing", handleStopTyping);
-
-    // Clean up typing users periodically
-    const typingCleanup = setInterval(() => {
-      setTypingUsers((prev) => {
-        const now = Date.now();
-        const next = new Map(prev);
-        for (const [userId, data] of next.entries()) {
-          if (now - data.timestamp > 3000) {
-            next.delete(userId);
-          }
-        }
-        return next;
-      });
-    }, 1000);
 
     return () => {
       if (recordingStream) {
@@ -95,14 +137,13 @@ const ChatRoom = ({ user, socket }) => {
       }
       socket.emit("room:leave", { roomId, user });
       socket.off("room:info", handleRoomInfo);
-      socket.off("group:info", handleGroupInfo);
-      socket.off("message:received", handleMessage);
-      socket.off("message:history");
+      socket.off("message:received", handleNewMessage);
+      socket.off("message:history", handleMessageHistory);
+      socket.off("message:seen:update", handleSeenUpdate);
       socket.off("user:typing", handleTyping);
       socket.off("user:stop-typing", handleStopTyping);
-      clearInterval(typingCleanup);
     };
-  }, [socket, roomId, user]);
+  }, [socket, roomId, user, isPageVisible]);
 
   const handleTyping = (e) => {
     setMessage(e.target.value);
@@ -128,28 +169,17 @@ const ChatRoom = ({ user, socket }) => {
       return;
     }
 
-    if (!canPerformAction("postMessage")) {
-      setError("You don't have permission to send messages");
-      return;
-    }
-
-    // For media types, check media sharing permission
-    if (
-      (type === "audio" || type === "image") &&
-      !canPerformAction("shareMedia")
-    ) {
-      setError("You don't have permission to share media");
-      return;
-    }
+    const message = {
+      type,
+      content,
+      sender: user,
+      id: `msg_${Date.now()}`,
+      seenBy: [user.id], // Initialize with sender
+    };
 
     socket.emit("message:send", {
       roomId,
-      message: {
-        type,
-        content,
-        sender: user,
-        timestamp: new Date().toISOString(),
-      },
+      message,
     });
   };
 
@@ -279,6 +309,20 @@ const ChatRoom = ({ user, socket }) => {
         return false;
     }
   };
+
+  const renderSeenStatus = (msg) => {
+    if (msg.sender.id !== user.id) return null;
+
+    const seenCount = msg.seenBy?.filter((id) => id !== user.id).length || 0;
+    if (seenCount === 0) return null;
+
+    return (
+      <div className="flex justify-end">
+        <span className="text-xs text-gray-500 mt-1">Seen by {seenCount}</span>
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-100">
       {/* Chat Room Header */}
@@ -359,11 +403,17 @@ const ChatRoom = ({ user, socket }) => {
                   />
                 )}
                 <div className="text-xs opacity-75 mt-1">
-                  {new Date(msg.timestamp).toLocaleTimeString()}
+                  {new Date(msg.timestamp).toLocaleString("en-US", {
+                    hour: "numeric",
+                    minute: "numeric",
+                    hour12: true,
+                  })}
                 </div>
+                {renderSeenStatus(msg)}
               </div>
             </div>
           ))}
+
           <div ref={messagesEndRef} />
         </div>
       </div>

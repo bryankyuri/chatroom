@@ -8,17 +8,30 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: 'Chat Room App',
-        short_name: 'Chat App',
+        name: 'Chat App',
+        short_name: 'Chat',
         theme_color: '#ffffff',
+        background_color: '#ffffff',
+        display: 'standalone',
+        scope: '/',
+        start_url: '/',
         icons: [
           {
-            src: '/vite.svg',
+            src: '/icon-192x192.png',
             sizes: '192x192',
-            type: 'image/svg+xml'
+            type: 'image/png'
+          },
+          {
+            src: '/icon-512x512.png',
+            sizes: '512x512',
+            type: 'image/png'
           }
         ]
+      },
+      workbox: {
+        cleanupOutdatedCaches: false,
+        sourcemap: true
       }
     })
   ]
-})
+});
